@@ -53,7 +53,7 @@ def average(items):
         total += items[i]
     return total / len(items)
 EOF
-  REVIEW="$(echo "Read-only review of sample.py as it stands - there is no diff. Goal: correct arithmetic mean. Report ONLY bugs with file:line. Output ONLY the final findings list. Do NOT modify/create/delete any file; only read and report." | \
+  REVIEW="$(echo "Read-only review of sample.py as it stands - there is no diff. Read the ACTUAL local working tree (do NOT rely on remote/GitHub). Goal: correct arithmetic mean. Report ONLY: (1) bugs/correctness, (2) anything missing vs the goal, (3) quality (dead code, duplication, error handling, naming). Cite file:line, rank by severity. Output ONLY the final findings list, no reasoning. Do NOT modify/create/delete any file; only read and report." | \
     codex -C "$TMP" exec -m "$MODEL" -c model_reasoning_effort=xhigh \
       --dangerously-bypass-approvals-and-sandbox --skip-git-repo-check 2>&1)"
   printf '%s' "$REVIEW" | grep -qiE 'off.by.one|last (item|element)|skips|len\(items\) - 1' || \

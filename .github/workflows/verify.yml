@@ -1,0 +1,132 @@
+name: Verify
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  bash:
+    name: Bash / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-24.04
+          - macos-15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22.19.0
+
+      - name: Check Bash syntax
+        run: bash -n install.sh test.sh
+
+      - name: Put deterministic Codex test double on PATH
+        shell: bash
+        run: |
+          cp -R tests "$RUNNER_TEMP/codex-review-tests"
+          chmod +x "$RUNNER_TEMP/codex-review-tests/bin/codex"
+          echo "$RUNNER_TEMP/codex-review-tests/bin" >>"$GITHUB_PATH"
+
+      - name: Run isolated Bash installer flow
+        shell: bash
+        run: |
+          export CLAUDE_SKILLS_DIR="$RUNNER_TEMP/claude-skills"
+          bash ./install.sh
+          cmp SKILL.md "$CLAUDE_SKILLS_DIR/codex-review/SKILL.md"
+
+      - name: Run full Bash test flow
+        shell: bash
+        run: |
+          export CLAUDE_SKILLS_DIR="$RUNNER_TEMP/claude-skills"
+          bash ./test.sh --full
+
+  powershell:
+    name: PowerShell / windows-2022
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22.19.0
+
+      - name: Check PowerShell syntax
+        shell: pwsh
+        run: |
+          foreach ($path in 'install.ps1', 'test.ps1') {
+            $tokens = $null
+            $errors = $null
+            [void][System.Management.Automation.Language.Parser]::ParseFile(
+              (Resolve-Path $path), [ref]$tokens, [ref]$errors
+            )
+            if ($errors.Count) {
+              $errors | Format-List
+              throw "$path has PowerShell parse errors"
+            }
+          }
+
+      - name: Put deterministic Codex test double on PATH
+        shell: pwsh
+        run: |
+          $root = Join-Path $env:RUNNER_TEMP 'codex-review-tests'
+          New-Item -ItemType Directory -Force -Path $root | Out-Null
+          Copy-Item tests\* $root -Recurse
+          (Join-Path $root 'bin') | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+      - name: Run isolated PowerShell installer flow
+        shell: pwsh
+        run: |
+          $env:CLAUDE_SKILLS_DIR = Join-Path $env:RUNNER_TEMP 'claude-skills'
+          .\install.ps1
+          $installed = Join-Path $env:CLAUDE_SKILLS_DIR 'codex-review\SKILL.md'
+          if ((Get-FileHash SKILL.md).Hash -cne (Get-FileHash $installed).Hash) {
+            throw 'Installed SKILL.md does not match repository source'
+          }
+
+      - name: Run full PowerShell test flow
+        shell: pwsh
+        run: |
+          $env:CLAUDE_SKILLS_DIR = Join-Path $env:RUNNER_TEMP 'claude-skills'
+          .\test.ps1 -Full
+
+      - name: Run Windows PowerShell 5.1 flow
+        shell: pwsh
+        run: |
+          $env:CLAUDE_SKILLS_DIR = Join-Path $env:RUNNER_TEMP 'claude-skills-windows-powershell'
+          & powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\install.ps1
+          if ($LASTEXITCODE -ne 0) { throw 'Windows PowerShell installer failed' }
+          & powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\test.ps1 -Full
+          if ($LASTEXITCODE -ne 0) { throw 'Windows PowerShell test failed' }
+
+  package:
+    name: Skill package
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22.19.0
+
+      - name: Validate required skill metadata and repository links
+        shell: bash
+        run: |
+          grep -q '^name: codex-review$' SKILL.md
+          grep -q '^description: .\+' SKILL.md
+          grep -q 'tests/fake-codex.mjs' README.md
+          grep -q '.github/workflows/verify.yml' README.md
+          test -f LICENSE
+
+      - name: Lint Markdown
+        run: npx --yes markdownlint-cli2@0.18.1 README.md SKILL.md
+
+      - name: Reject whitespace errors in HEAD
+        run: git show --check --format= HEAD

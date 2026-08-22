@@ -1,115 +1,169 @@
-# codex-review skill installer (Windows PowerShell / pwsh).
+# codex-review installer for Windows PowerShell and PowerShell 7.
 #
-# Checks every prerequisite and installs what is missing:
-#   1. Node.js / npm  (via winget if absent)
-#   2. Codex CLI >= 0.144.1  (npm install -g @openai/codex@latest)
-#   3. Codex login  (launches `codex login` if needed)
-#   4. The skill itself -> ~\.claude\skills\codex-review\SKILL.md
-#   5. A quick end-to-end probe
-#
-# Safe to re-run; re-running updates everything to latest.
+# Checks or installs Node.js/npm and Codex CLI, verifies Codex login, installs
+# the Claude Code skill, and runs an exact live probe in the read-only sandbox.
 $ErrorActionPreference = "Stop"
 
 $Repo = "RandyNorthrup/codex-review-skill"
 $Raw = "https://raw.githubusercontent.com/$Repo/main"
-$MinVersion = [version]"0.144.1"
+$MinVersion = [version]"0.149.0"
 $Model = if ($env:CODEX_REVIEW_MODEL) { $env:CODEX_REVIEW_MODEL } else { "gpt-5.6-sol" }
-$SkillDir = Join-Path $HOME ".claude\skills\codex-review"
+$SkillsRoot = if ($env:CLAUDE_SKILLS_DIR) { $env:CLAUDE_SKILLS_DIR } else { Join-Path $HOME ".claude\skills" }
+$SkillDir = Join-Path $SkillsRoot "codex-review"
 
-function Ok($m)   { Write-Host "  ok: $m" }
-function Fail($m) { Write-Host "FAIL: $m" -ForegroundColor Red; exit 1 }
+function Ok($Message) {
+    Write-Output "  ok: $Message"
+}
 
-Write-Host "== codex-review skill installer =="
+function Fail($Message) {
+    throw "FAIL: $Message"
+}
 
-# --- 1. Node / npm -----------------------------------------------------------
-if (-not (Get-Command npm -ErrorAction SilentlyContinue)) {
-    Write-Host "npm not found - trying to install Node.js via winget..."
-    if (Get-Command winget -ErrorAction SilentlyContinue) {
-        winget install --id OpenJS.NodeJS.LTS -e --accept-source-agreements --accept-package-agreements
-        # pick up the new PATH without a new terminal
-        $env:Path = [Environment]::GetEnvironmentVariable("Path", "Machine") + ";" +
-                    [Environment]::GetEnvironmentVariable("Path", "User")
-    }
-    if (-not (Get-Command npm -ErrorAction SilentlyContinue)) {
-        Fail "could not install Node.js automatically. Install it from https://nodejs.org, open a NEW terminal, and re-run this installer."
+function Show-LogTail($Path) {
+    if (Test-Path -LiteralPath $Path) {
+        Get-Content -LiteralPath $Path -Tail 20 | Write-Output
     }
 }
-Ok "npm $(npm --version)"
 
-# --- 2. Codex CLI (>= $MinVersion) -------------------------------------------
-function Get-CodexVersion($exe) {
-    $out = & $exe --version 2>$null
-    if ("$out" -match '(\d+\.\d+\.\d+)') { return [version]$Matches[1] }
+function Get-CodexVersion($Executable) {
+    $output = & $Executable --version 2>$null
+    if ("$output" -match '(\d+\.\d+\.\d+)') { return [version]$Matches[1] }
     return $null
 }
 
+function Resolve-NativeCommand($BaseName) {
+    foreach ($name in "$BaseName.cmd", "$BaseName.exe", $BaseName) {
+        $command = Get-Command $name -CommandType Application -ErrorAction SilentlyContinue |
+            Select-Object -First 1
+        if ($command) { return $command.Source }
+    }
+    return $null
+}
+
+Write-Output "== codex-review skill installer =="
+
+# --- 1. Node / npm -----------------------------------------------------------
+$Npm = Resolve-NativeCommand "npm"
+if (-not $Npm) {
+    Write-Output "npm not found - trying to install Node.js via winget..."
+    $Winget = Resolve-NativeCommand "winget"
+    if ($Winget) {
+        & $Winget install --id OpenJS.NodeJS.LTS -e --accept-source-agreements --accept-package-agreements
+        if ($LASTEXITCODE -ne 0) { Fail "winget could not install Node.js" }
+        $env:Path = [Environment]::GetEnvironmentVariable("Path", "Machine") + ";" +
+                    [Environment]::GetEnvironmentVariable("Path", "User")
+        $Npm = Resolve-NativeCommand "npm"
+    }
+    if (-not $Npm) {
+        Fail "could not install Node.js automatically. Install it from https://nodejs.org, open a new terminal, and rerun this installer."
+    }
+}
+Ok "npm $(& $Npm --version)"
+
+# --- 2. Codex CLI ------------------------------------------------------------
 $needCodex = $false
-$codexCmd = Get-Command codex -ErrorAction SilentlyContinue
-if (-not $codexCmd) {
-    Write-Host "codex not found - installing..."
+$Codex = Resolve-NativeCommand "codex"
+if (-not $Codex) {
+    Write-Output "codex not found - installing..."
     $needCodex = $true
 } else {
-    $ver = Get-CodexVersion $codexCmd.Source
-    if (-not $ver) { $needCodex = $true }
-    elseif ($ver -lt $MinVersion) {
-        Write-Host "codex $ver is older than $MinVersion - updating..."
+    $version = Get-CodexVersion $Codex
+    if (-not $version) {
+        $needCodex = $true
+    } elseif ($version -lt $MinVersion) {
+        Write-Output "codex $version is older than $MinVersion - updating..."
         $needCodex = $true
     }
 }
+
 if ($needCodex) {
-    npm install -g @openai/codex@latest
+    & $Npm install -g @openai/codex@latest
     if ($LASTEXITCODE -ne 0) { Fail "npm install -g @openai/codex@latest failed" }
-    $codexCmd = Get-Command codex -ErrorAction SilentlyContinue
-    # PATH may still resolve to a stale app-managed copy - prefer the npm-global one
+    $Codex = Resolve-NativeCommand "codex"
+
+    # PATH can resolve to a stale app-managed copy. Prefer npm-global when the
+    # resolved command is still missing or too old.
     $npmCodex = Join-Path $env:APPDATA "npm\codex.cmd"
-    if ((Test-Path $npmCodex) -and ((-not $codexCmd) -or ((Get-CodexVersion $codexCmd.Source) -lt $MinVersion))) {
-        $codexCmd = Get-Command $npmCodex
+    $resolvedVersion = if ($Codex) { Get-CodexVersion $Codex } else { $null }
+    if ((Test-Path -LiteralPath $npmCodex) -and ((-not $resolvedVersion) -or ($resolvedVersion -lt $MinVersion))) {
+        $Codex = $npmCodex
     }
-    if (-not $codexCmd) { Fail "codex still not on PATH after install - open a NEW terminal and re-run this installer." }
+    if (-not $Codex) {
+        Fail "codex is still not on PATH after installation. Open a new terminal and rerun this installer."
+    }
 }
-$CODEX = $codexCmd.Source
-$ver = Get-CodexVersion $CODEX
-if ($ver -lt $MinVersion) { Fail "codex on PATH is $ver (< $MinVersion) and points at $CODEX - a stale copy is shadowing the npm one. Put $env:APPDATA\npm first on PATH." }
-Ok "codex $ver at $CODEX"
+
+$version = Get-CodexVersion $Codex
+if (-not $version) { Fail "could not parse Codex CLI version from $Codex" }
+if ($version -lt $MinVersion) {
+    Fail "codex on PATH is $version (< $MinVersion) at $Codex. Remove or reorder stale installations, then rerun."
+}
+Ok "codex $version at $Codex"
 
 # --- 3. Codex login ----------------------------------------------------------
-& $CODEX login status *> $null
+& $Codex login status *> $null
 if ($LASTEXITCODE -eq 0) {
     Ok "codex is logged in"
 } else {
-    Write-Host "codex is not logged in - launching 'codex login' (finishes in your browser)..."
-    & $CODEX login
-    if ($LASTEXITCODE -ne 0) { Fail "codex login failed - run 'codex login' manually, then re-run this installer." }
+    Write-Output "codex is not logged in - launching 'codex login' in your browser..."
+    & $Codex login
+    if ($LASTEXITCODE -ne 0) {
+        Fail "codex login failed. Run 'codex login' manually, then rerun this installer."
+    }
     Ok "codex login complete"
 }
 
 # --- 4. Install the skill ----------------------------------------------------
 New-Item -ItemType Directory -Force -Path $SkillDir | Out-Null
-$dest = Join-Path $SkillDir "SKILL.md"
+$destination = Join-Path $SkillDir "SKILL.md"
 $localSkill = if ($PSScriptRoot) { Join-Path $PSScriptRoot "SKILL.md" } else { $null }
 
-if ($localSkill -and (Test-Path $localSkill)) {
-    $newContent = Get-Content -Raw $localSkill          # running from a clone
+if ($localSkill -and (Test-Path -LiteralPath $localSkill)) {
+    $newContent = [System.IO.File]::ReadAllText($localSkill, [System.Text.Encoding]::UTF8)
 } else {
     $newContent = (Invoke-WebRequest -UseBasicParsing "$Raw/SKILL.md").Content
     if (-not $newContent) { Fail "could not download SKILL.md from $Raw" }
 }
-if ((Test-Path $dest) -and ((Get-Content -Raw $dest) -ne $newContent)) {
-    Copy-Item $dest "$dest.bak" -Force
-    Write-Host "  note: existing SKILL.md differed (self-repairs?) - backed up to SKILL.md.bak"
+if ((Test-Path -LiteralPath $destination) -and
+    ([System.IO.File]::ReadAllText($destination, [System.Text.Encoding]::UTF8) -cne $newContent)) {
+    Copy-Item -LiteralPath $destination -Destination "$destination.bak" -Force
+    Write-Output "  note: existing SKILL.md differed; backed up to SKILL.md.bak"
 }
-Set-Content -Path $dest -Value $newContent -NoNewline
-Ok "skill installed at $dest"
+$utf8WithoutBom = New-Object System.Text.UTF8Encoding($false)
+[System.IO.File]::WriteAllText($destination, $newContent, $utf8WithoutBom)
+Ok "skill installed at $destination"
 
-# --- 5. Probe ----------------------------------------------------------------
-Write-Host "running a quick end-to-end probe (~30s)..."
-$out = "Reply with exactly OK" | & $CODEX exec -m $Model --dangerously-bypass-approvals-and-sandbox --skip-git-repo-check 2>&1 | Out-String
-if ($out -match "OK") {
-    Ok "probe returned OK (model $Model)"
-} else {
-    Write-Host $out.Substring([Math]::Max(0, $out.Length - 2000))
-    Fail "probe failed (usage limit? model access?). The skill IS installed; see the Self-repair section in SKILL.md."
+# --- 5. Exact live probe -----------------------------------------------------
+$workDir = Join-Path ([System.IO.Path]::GetTempPath()) ("codex-review-install-" + [System.IO.Path]::GetRandomFileName())
+New-Item -ItemType Directory -Path $workDir | Out-Null
+try {
+    Write-Output "running a quick end-to-end probe..."
+    $probeResult = Join-Path $workDir "probe-result.md"
+    $probeLog = Join-Path $workDir "probe.log"
+    "Reply with exactly OK" | & $Codex -s read-only -a never `
+        --disable plugins --disable apps --disable hooks `
+        -c "mcp_servers={}" exec -m $Model `
+        --skip-git-repo-check --ephemeral -o $probeResult *> $probeLog
+    $probeExit = $LASTEXITCODE
+    if ($probeExit -ne 0) {
+        Show-LogTail $probeLog
+        Fail "probe failed (authentication, model access, usage limit, or sandbox startup). The skill was installed."
+    }
+    if (-not (Test-Path -LiteralPath $probeResult)) {
+        Show-LogTail $probeLog
+        Fail "probe produced no final-answer file"
+    }
+    $probeAnswer = (Get-Content -Raw -LiteralPath $probeResult).Trim()
+    if ($probeAnswer -cne "OK") {
+        Show-LogTail $probeLog
+        Fail "probe response was not exactly OK"
+    }
+    Ok "probe returned exactly OK (model $Model, read-only sandbox)"
+} finally {
+    if (Test-Path -LiteralPath $workDir) {
+        Remove-Item -LiteralPath $workDir -Recurse -Force
+    }
 }
 
-Write-Host ""
-Write-Host "PASS: codex-review is installed. In Claude Code, ask for a 'codex review'."
+Write-Output ""
+Write-Output "PASS: codex-review is installed. In Claude Code, invoke /codex-review or ask for a Codex review."

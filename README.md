@@ -1,124 +1,202 @@
-# codex-review — independent second-opinion code review skill for Claude Code
+# codex-review
 
-A [Claude Code](https://claude.com/claude-code) skill that runs the
-[OpenAI Codex CLI](https://github.com/openai/codex) (GPT-5.6-sol, xhigh
-reasoning) as a **second, independent reviewer** over your code. Because Codex
-is a different model than Claude, it catches things Claude misses — and Claude
-verifies every Codex finding before reporting it, so you get a triaged,
-cross-checked review instead of raw output.
+> Independent, sandboxed Codex reviews for Claude Code.
 
-**Two review scopes, both supported:**
+[![License: MIT](https://img.shields.io/badge/license-MIT-2ea44f.svg)](LICENSE)
+[![Platforms](https://img.shields.io/badge/platforms-Windows%20%7C%20Linux%20%7C%20macOS-4c1.svg)](#platform-support)
 
-- **Diff review** — a commit, a branch diff, or uncommitted changes
-- **Plain review** — files or directories as they stand, no diff, no git needed
+Run a second-opinion review over a diff or existing files. Codex reads the
+local tree inside its read-only sandbox; Claude verifies every finding before
+reporting it.
 
-**Hard rules baked into the skill:**
+## Why use it?
 
-- Codex runs **strictly read-only** — it never edits, creates, or deletes files
-- Every finding is verified against the actual code before you see it — a
-  Codex finding is a lead, not a verdict
-- The skill **self-repairs**: when a fact rots (CLI version, model name, flag
-  syntax), the model diagnoses the failure, fixes it, re-verifies with a
-  built-in self-test, and updates the skill file so the fix persists
+- **Independent pass:** a separate model reviews the same local evidence.
+- **Enforced read-only access:** Codex CLI runs with `-s read-only -a never`;
+  the skill never uses the dangerous sandbox-bypass flag.
+- **Isolated tool surface:** configured MCP servers, plugins, apps, and hooks
+  are disabled for the review process.
+- **Useful scopes:** commits, branch diffs, uncommitted changes, files, folders,
+  and non-Git directories.
+- **Triaged results:** Codex findings are leads. Claude checks each citation and
+  rejects false positives before reporting conclusions.
+- **Quiet execution:** `--ephemeral` prevents review sessions from being saved.
 
-## Install (one-liner)
+> [!IMPORTANT]
+> No model review proves code is bug-free. This skill adds an independent,
+> evidence-backed review pass; it does not replace tests, security analysis, or
+> domain-specific validation.
 
-**macOS / Linux / Git Bash:**
+## Quick start
+
+### Prerequisites
+
+- [Claude Code](https://docs.anthropic.com/en/docs/claude-code/overview)
+- Internet access
+- A ChatGPT account that can authenticate Codex CLI
+
+The installer checks Node.js, npm, Codex CLI, Codex authentication, skill
+installation, and a live model probe. It does **not** install Claude Code.
+
+### Install
+
+#### macOS or Linux
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/RandyNorthrup/codex-review-skill/main/install.sh | bash
 ```
 
-**Windows (PowerShell):**
+#### Windows PowerShell
 
 ```powershell
 iwr -useb https://raw.githubusercontent.com/RandyNorthrup/codex-review-skill/main/install.ps1 | iex
 ```
 
-The installer checks every prerequisite and installs whatever is missing:
-
-1. **Node.js / npm** — installed via your package manager (brew / apt / dnf /
-   pacman / winget) if absent
-2. **Codex CLI >= 0.144.1** — `npm install -g @openai/codex@latest` if missing
-   or too old
-3. **Codex login** — launches `codex login` (browser sign-in with your ChatGPT
-   account) if you are not logged in
-4. **The skill** — installed to `~/.claude/skills/codex-review/SKILL.md`
-5. **End-to-end probe** — a quick live call to confirm everything works
-
-Safe to re-run any time; re-running updates everything to latest. If your
-installed skill has diverged (self-repairs), the old copy is backed up to
-`SKILL.md.bak` before being replaced.
-
-### Install from a clone instead
+Prefer inspecting scripts before execution? Clone first:
 
 ```bash
-git clone https://github.com/RandyNorthrup/codex-review-skill
+git clone https://github.com/RandyNorthrup/codex-review-skill.git
 cd codex-review-skill
-./install.sh        # or  .\install.ps1  on Windows
+bash ./install.sh
 ```
 
-### Project-scoped install (this repo only, instead of all projects)
-
-Copy `SKILL.md` to `<your-repo>/.claude/skills/codex-review/SKILL.md`.
-
-## Test it
-
-Quick smoke test (seconds — checks CLI, version, login, live probe):
-
-```bash
-./test.sh            # or  .\test.ps1  on Windows
+```powershell
+git clone https://github.com/RandyNorthrup/codex-review-skill.git
+Set-Location codex-review-skill
+.\install.ps1
 ```
 
-Full test (minutes — runs a real review over a planted-bug file and asserts
-the bugs are found and nothing was modified):
+Installers place the skill at:
 
-```bash
-./test.sh --full     # or  .\test.ps1 -Full  on Windows
-```
-
-## Use it
-
-In any Claude Code session, just ask:
-
-> give me a codex review of my uncommitted changes
-
-> codex review commit abc1234 — goal was to fix the race in the job queue
-
-> second set of eyes on src/core/scheduler.cpp, no diff, just review it
-
-Claude picks the scope, runs Codex read-only, verifies each finding against
-the code, and reports which findings are real and which are false positives.
-
-## Requirements
-
-- [Claude Code](https://claude.com/claude-code)
-- A ChatGPT account for `codex login` (the skill uses `gpt-5.6-sol`, the model
-  available to ChatGPT accounts; set `CODEX_REVIEW_MODEL` to override in the
-  installer/tests)
-- Node.js (auto-installed by the installer if a package manager is available)
-
-## How it stays working (self-repair)
-
-`SKILL.md` encodes facts that rot over time — CLI versions, model names, flag
-placement. The skill includes:
-
-- a **known-failures table** (symptom → cause → fix) covering every failure
-  mode hit so far
-- a **diagnose protocol** for new failures (trust `--help` over the file,
-  probe with one variable changed at a time)
-- a **self-test** (planted-bug review) to prove a repair end to end
-- **edit rules** so the model updates the skill file itself — date-stamped,
-  without ever weakening the read-only contract
-
-## Repo layout
-
-| File | Purpose |
+| Scope | Location |
 |---|---|
-| `SKILL.md` | The skill itself — this is what gets installed |
-| `install.sh` / `install.ps1` | One-shot installer: prereqs + CLI + login + skill + probe |
-| `test.sh` / `test.ps1` | Smoke test; `--full` / `-Full` runs a real planted-bug review |
+| Personal, macOS/Linux | `~/.claude/skills/codex-review/SKILL.md` |
+| Personal, Windows | `%USERPROFILE%\.claude\skills\codex-review\SKILL.md` |
+| Project only | `<repo>/.claude/skills/codex-review/SKILL.md` |
+
+If an installed `SKILL.md` differs, the installer preserves it as
+`SKILL.md.bak` before replacing it. Node.js or Codex CLI may be installed or
+upgraded when missing or below the supported minimum.
+
+## Use
+
+Ask naturally or invoke `/codex-review`:
+
+```text
+Give me a Codex review of my uncommitted changes.
+```
+
+```text
+Codex review commit abc1234. Goal: fix the job-queue race.
+```
+
+```text
+Second set of eyes on src/core/scheduler.cpp as it stands; there is no diff.
+```
+
+Review output is limited to three categories:
+
+1. bugs and correctness defects;
+2. anything missing from the stated goal;
+3. quality issues such as dead code, duplication, weak error handling, or
+   unclear naming.
+
+Findings include `file:line` evidence and severity. Claude then verifies each
+finding against the actual local tree.
+
+## Test
+
+Quick test checks CLI discovery, version, login, installed skill, and an exact
+live-model response:
+
+```bash
+bash ./test.sh
+```
+
+```powershell
+.\test.ps1
+```
+
+Full test adds a real review of a planted-bug file. It checks expected findings,
+the file hash, and the target directory inventory for persistent changes:
+
+```bash
+bash ./test.sh --full
+```
+
+```powershell
+.\test.ps1 -Full
+```
+
+Live tests consume Codex quota. The included GitHub Actions workflow uses a
+deterministic fake CLI to test cross-platform script control flow without
+credentials or model usage.
+
+## Platform support
+
+| Platform | Installer | Test runner | Workflow coverage | Verified live host |
+|---|---|---|---|---|
+| Windows 10/11 | `install.ps1` | `test.ps1` | PowerShell 7 + Windows PowerShell 5.1 mocked flows | Windows 11, PowerShell 7 |
+| Linux | `install.sh` | `test.sh` | Ubuntu 24.04, Bash mocked full flow | Kubuntu 26.04, Bash 5.3 |
+| macOS | `install.sh` | `test.sh` | macOS 15, Bash mocked full flow | macOS 26.6 Intel, Bash 3.2 |
+
+Current support floor: Codex CLI **0.149.0**. The default model is
+`gpt-5.6-sol`; full reviews request `xhigh` reasoning. Model availability
+depends on the account and can change independently of this repository.
+
+Last live verification: **2026-08-21** with Codex CLI 0.149.0 on Windows 11,
+Kubuntu 26.04, and macOS 26.6 Intel. Each platform passed its installer probe
+and full planted-bug review through the read-only sandbox. The full tests also
+confirmed that Codex preserved the target file hash and directory inventory.
+
+## Configuration
+
+| Variable | Purpose | Default |
+|---|---|---|
+| `CODEX_REVIEW_MODEL` | Override model used by installers and tests | `gpt-5.6-sol` |
+| `CLAUDE_SKILLS_DIR` | Override personal Claude skills root in installers and tests | Platform user skills directory |
+
+## Safety model
+
+Codex runs with a restricted invocation equivalent to:
+
+```text
+-s read-only -a never --disable plugins --disable apps --disable hooks
+-c mcp_servers={} exec ... --ephemeral
+```
+
+This combination asks Codex CLI to enforce filesystem read-only access, denies
+approval escalation, clears configured MCP servers, disables plugin/app/hook
+tool surfaces, and avoids saving the session. User configuration remains loaded
+because Codex CLI 0.149.0 on Windows rejects target reads when
+`--ignore-user-config` is set; explicit CLI flags override side-effecting tool
+configuration. Prompts also state the read-only rule, but prompt text is not
+treated as the security boundary.
+
+Review results and logs belong in a temporary directory outside the target.
+Fixes are separate work and require explicit user authorization.
+
+## Troubleshooting
+
+| Problem | Resolution |
+|---|---|
+| `codex` missing or too old | Install current Codex CLI, then open a new shell and rerun the test. |
+| `codex login status` fails | Run `codex login`. |
+| Default model is unavailable | Set `CODEX_REVIEW_MODEL` to a model available to your account. |
+| Usage-limit message | Retry after the reset time shown by Codex. |
+| Empty result file | Read the captured log; the review did not complete successfully. |
+| Read-only sandbox cannot start | Stop. Report platform and CLI version; do not bypass the sandbox. |
+
+## Repository layout
+
+| Path | Purpose |
+|---|---|
+| `SKILL.md` | Claude Code skill instructions |
+| `install.sh`, `install.ps1` | Prerequisite checks, installation, and live probe |
+| `test.sh`, `test.ps1` | Quick and full live validation |
+| `tests/fake-codex.mjs` | Credential-free CI test double |
+| `.github/workflows/verify.yml` | Windows, Linux, and macOS validation matrix |
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+[MIT](LICENSE) © 2026 Randy Northrup

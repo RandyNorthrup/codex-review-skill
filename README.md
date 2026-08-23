@@ -200,3 +200,9 @@ Fixes are separate work and require explicit user authorization.
 ## License
 
 [MIT](LICENSE) © 2026 Randy Northrup
+
+## Support this project
+
+If this project saves you time, you can
+[buy me a coffee](https://www.paypal.com/donate/?hosted_button_id=Q9VC7B42R7K82)
+via PayPal. Thank you!

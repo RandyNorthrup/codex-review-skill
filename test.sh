@@ -12,8 +12,8 @@ if [ "$(uname -s 2>/dev/null)" = "Darwin" ]; then
   export PATH
 fi
 
-MIN_VERSION="0.149.0"
-MODEL="${CODEX_REVIEW_MODEL:-gpt-5.6-sol}"
+MIN_VERSION="0.156.1"
+MODEL="${CODEX_REVIEW_MODEL:-gpt-6-sol}"
 FULL=0
 
 ok()   { printf '  ok: %s\n' "$*"; }
@@ -89,7 +89,7 @@ PROBE_LOG="$WORK_DIR/probe.log"
 if ! printf '%s\n' "Reply with exactly OK" | \
   "$CODEX" -s read-only -a never \
     --disable plugins --disable apps --disable hooks \
-    -c 'mcp_servers={}' exec -m "$MODEL" \
+    -c 'mcp_servers={}' exec --ignore-user-config -c windows.sandbox=unelevated -m "$MODEL" \
     --skip-git-repo-check --ephemeral -o "$PROBE_RESULT" \
     >"$PROBE_LOG" 2>&1; then
   show_log_tail "$PROBE_LOG"
@@ -117,12 +117,12 @@ EOF
   BEFORE_TREE="$(find "$TARGET" -print | LC_ALL=C sort)"
   REVIEW_RESULT="$WORK_DIR/review-result.md"
   REVIEW_LOG="$WORK_DIR/review.log"
-  PROMPT="Read-only review of sample.py as it stands; there is no diff. Read the actual local working tree. Goal: correct arithmetic mean. Report only: (1) bugs and correctness defects, (2) anything missing from the goal, and (3) quality issues. Cite file:line, rank by severity, and output only the final findings list. Do not modify, create, or delete files."
+  PROMPT="Read-only review of sample.py as it stands; there is no diff. Read the actual local working tree; do not rely on remote or GitHub content. Goal: correct arithmetic mean. Report only: (1) bugs and correctness defects, (2) anything missing from the goal, and (3) quality issues such as dead code, duplication, weak error handling, or unclear naming. Cite file:line and rank by severity. Output only the final findings list. Do not modify, create, or delete files."
 
   if ! printf '%s\n' "$PROMPT" | \
     "$CODEX" -C "$TARGET" -s read-only -a never \
       --disable plugins --disable apps --disable hooks \
-      -c 'mcp_servers={}' exec \
+      -c 'mcp_servers={}' exec --ignore-user-config -c windows.sandbox=unelevated \
       -m "$MODEL" -c model_reasoning_effort=xhigh \
       --skip-git-repo-check --ephemeral -o "$REVIEW_RESULT" \
       >"$REVIEW_LOG" 2>&1; then

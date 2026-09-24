@@ -5,8 +5,8 @@
 param([switch]$Full)
 $ErrorActionPreference = "Stop"
 
-$MinVersion = [version]"0.149.0"
-$Model = if ($env:CODEX_REVIEW_MODEL) { $env:CODEX_REVIEW_MODEL } else { "gpt-5.6-sol" }
+$MinVersion = [version]"0.156.1"
+$Model = if ($env:CODEX_REVIEW_MODEL) { $env:CODEX_REVIEW_MODEL } else { "gpt-6-sol" }
 
 function Ok($Message) {
     Write-Output "  ok: $Message"
@@ -20,6 +20,14 @@ function Show-LogTail($Path) {
     if (Test-Path -LiteralPath $Path) {
         Get-Content -LiteralPath $Path -Tail 20 | Write-Output
     }
+}
+
+# Windows PowerShell 5.1 turns redirected native stderr into a terminating error
+# under "Stop", and Codex writes normal status lines to stderr.
+function Invoke-Native([scriptblock]$Command) {
+    $ErrorActionPreference = "Continue"
+    & $Command
+    return $LASTEXITCODE
 }
 
 function Get-TreeSnapshot($Root) {
@@ -61,8 +69,8 @@ if ($version -lt $MinVersion) {
 Ok "version $version >= $MinVersion"
 
 # 3. Login
-& $Codex login status *> $null
-if ($LASTEXITCODE -ne 0) { Fail "codex is not logged in. Run: codex login" }
+$loginExit = Invoke-Native { & $Codex login status *> $null }
+if ($loginExit -ne 0) { Fail "codex is not logged in. Run: codex login" }
 Ok "logged in"
 
 # 4. Skill installed
@@ -86,11 +94,12 @@ try {
     # 5. Exact live probe using the enforced read-only sandbox
     $probeResult = Join-Path $workDir "probe-result.md"
     $probeLog = Join-Path $workDir "probe.log"
-    "Reply with exactly OK" | & $Codex -s read-only -a never `
-        --disable plugins --disable apps --disable hooks `
-        -c "mcp_servers={}" exec -m $Model `
-        --skip-git-repo-check --ephemeral -o $probeResult *> $probeLog
-    $probeExit = $LASTEXITCODE
+    $probeExit = Invoke-Native {
+        "Reply with exactly OK" | & $Codex -s read-only -a never `
+            --disable plugins --disable apps --disable hooks `
+            -c "mcp_servers={}" exec --ignore-user-config -c windows.sandbox="unelevated" -m $Model `
+            --skip-git-repo-check --ephemeral -o $probeResult *> $probeLog
+    }
     if ($probeExit -ne 0) {
         Show-LogTail $probeLog
         Fail "probe failed (authentication, model access, usage limit, or sandbox startup)"
@@ -124,14 +133,15 @@ def average(items):
         $beforeTree = Get-TreeSnapshot $target
         $reviewResult = Join-Path $workDir "review-result.md"
         $reviewLog = Join-Path $workDir "review.log"
-        $prompt = "Read-only review of sample.py as it stands; there is no diff. Read the actual local working tree. Goal: correct arithmetic mean. Report only: (1) bugs and correctness defects, (2) anything missing from the goal, and (3) quality issues. Cite file:line, rank by severity, and output only the final findings list. Do not modify, create, or delete files."
+        $prompt = "Read-only review of sample.py as it stands; there is no diff. Read the actual local working tree; do not rely on remote or GitHub content. Goal: correct arithmetic mean. Report only: (1) bugs and correctness defects, (2) anything missing from the goal, and (3) quality issues such as dead code, duplication, weak error handling, or unclear naming. Cite file:line and rank by severity. Output only the final findings list. Do not modify, create, or delete files."
 
-        $prompt | & $Codex -C $target -s read-only -a never `
-            --disable plugins --disable apps --disable hooks `
-            -c "mcp_servers={}" exec `
-            -m $Model -c model_reasoning_effort="xhigh" `
-            --skip-git-repo-check --ephemeral -o $reviewResult *> $reviewLog
-        $reviewExit = $LASTEXITCODE
+        $reviewExit = Invoke-Native {
+            $prompt | & $Codex -C $target -s read-only -a never `
+                --disable plugins --disable apps --disable hooks `
+                -c "mcp_servers={}" exec --ignore-user-config -c windows.sandbox="unelevated" `
+                -m $Model -c model_reasoning_effort="xhigh" `
+                --skip-git-repo-check --ephemeral -o $reviewResult *> $reviewLog
+        }
         if ($reviewExit -ne 0) {
             Show-LogTail $reviewLog
             Fail "full review command failed"

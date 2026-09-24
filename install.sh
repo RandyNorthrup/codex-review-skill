@@ -14,8 +14,8 @@ fi
 
 REPO="RandyNorthrup/codex-review-skill"
 RAW="https://raw.githubusercontent.com/$REPO/main"
-MIN_VERSION="0.149.0"
-MODEL="${CODEX_REVIEW_MODEL:-gpt-5.6-sol}"
+MIN_VERSION="0.156.1"
+MODEL="${CODEX_REVIEW_MODEL:-gpt-6-sol}"
 SKILL_DIR="${CLAUDE_SKILLS_DIR:-$HOME/.claude/skills}/codex-review"
 
 say()  { printf '%s\n' "$*"; }
@@ -145,7 +145,7 @@ PROBE_LOG="$WORK_DIR/probe.log"
 if ! printf '%s\n' "Reply with exactly OK" | \
   "$CODEX" -s read-only -a never \
     --disable plugins --disable apps --disable hooks \
-    -c 'mcp_servers={}' exec -m "$MODEL" \
+    -c 'mcp_servers={}' exec --ignore-user-config -c windows.sandbox=unelevated -m "$MODEL" \
     --skip-git-repo-check --ephemeral -o "$PROBE_RESULT" \
     >"$PROBE_LOG" 2>&1; then
   show_log_tail "$PROBE_LOG"

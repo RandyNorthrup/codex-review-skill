@@ -6,8 +6,8 @@ $ErrorActionPreference = "Stop"
 
 $Repo = "RandyNorthrup/codex-review-skill"
 $Raw = "https://raw.githubusercontent.com/$Repo/main"
-$MinVersion = [version]"0.149.0"
-$Model = if ($env:CODEX_REVIEW_MODEL) { $env:CODEX_REVIEW_MODEL } else { "gpt-5.6-sol" }
+$MinVersion = [version]"0.156.1"
+$Model = if ($env:CODEX_REVIEW_MODEL) { $env:CODEX_REVIEW_MODEL } else { "gpt-6-sol" }
 $SkillsRoot = if ($env:CLAUDE_SKILLS_DIR) { $env:CLAUDE_SKILLS_DIR } else { Join-Path $HOME ".claude\skills" }
 $SkillDir = Join-Path $SkillsRoot "codex-review"
 
@@ -23,6 +23,14 @@ function Show-LogTail($Path) {
     if (Test-Path -LiteralPath $Path) {
         Get-Content -LiteralPath $Path -Tail 20 | Write-Output
     }
+}
+
+# Windows PowerShell 5.1 turns redirected native stderr into a terminating error
+# under "Stop", and Codex writes normal status lines to stderr.
+function Invoke-Native([scriptblock]$Command) {
+    $ErrorActionPreference = "Continue"
+    & $Command
+    return $LASTEXITCODE
 }
 
 function Get-CodexVersion($Executable) {
@@ -101,8 +109,8 @@ if ($version -lt $MinVersion) {
 Ok "codex $version at $Codex"
 
 # --- 3. Codex login ----------------------------------------------------------
-& $Codex login status *> $null
-if ($LASTEXITCODE -eq 0) {
+$loginExit = Invoke-Native { & $Codex login status *> $null }
+if ($loginExit -eq 0) {
     Ok "codex is logged in"
 } else {
     Write-Output "codex is not logged in - launching 'codex login' in your browser..."
@@ -140,11 +148,12 @@ try {
     Write-Output "running a quick end-to-end probe..."
     $probeResult = Join-Path $workDir "probe-result.md"
     $probeLog = Join-Path $workDir "probe.log"
-    "Reply with exactly OK" | & $Codex -s read-only -a never `
-        --disable plugins --disable apps --disable hooks `
-        -c "mcp_servers={}" exec -m $Model `
-        --skip-git-repo-check --ephemeral -o $probeResult *> $probeLog
-    $probeExit = $LASTEXITCODE
+    $probeExit = Invoke-Native {
+        "Reply with exactly OK" | & $Codex -s read-only -a never `
+            --disable plugins --disable apps --disable hooks `
+            -c "mcp_servers={}" exec --ignore-user-config -c windows.sandbox="unelevated" -m $Model `
+            --skip-git-repo-check --ephemeral -o $probeResult *> $probeLog
+    }
     if ($probeExit -ne 0) {
         Show-LogTail $probeLog
         Fail "probe failed (authentication, model access, usage limit, or sandbox startup). The skill was installed."

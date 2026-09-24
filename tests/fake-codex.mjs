@@ -6,12 +6,14 @@ import path from "node:path";
 const args = process.argv.slice(2);
 
 if (args.includes("--version")) {
-  process.stdout.write("codex-cli 0.149.0\n");
+  process.stdout.write("codex-cli 0.156.1\n");
   process.exit(0);
 }
 
+// Real Codex CLI writes these status lines to stderr on success; mirror that so
+// Windows PowerShell 5.1 stderr handling is exercised.
 if (args[0] === "login" && args[1] === "status") {
-  process.stdout.write("Logged in using CI test double\n");
+  process.stderr.write("Logged in using CI test double\n");
   process.exit(0);
 }
 
@@ -20,6 +22,7 @@ if (execIndex < 0) {
   process.stderr.write(`fake-codex: unsupported arguments: ${args.join(" ")}\n`);
   process.exit(2);
 }
+process.stderr.write("Reading prompt from stdin...\n");
 
 function requirePair(flag, value, beforeExec) {
   const index = args.findIndex(
@@ -40,8 +43,12 @@ requirePair("--disable", "plugins", true);
 requirePair("--disable", "apps", true);
 requirePair("--disable", "hooks", true);
 requirePair("-c", "mcp_servers={}", true);
+// Without an explicit Windows sandbox, --ignore-user-config makes read-only
+// Windows runs block every shell command.
+requirePair("-c", "windows.sandbox=unelevated", false);
 
 for (const required of [
+  "--ignore-user-config",
   "--skip-git-repo-check",
   "--ephemeral",
 ]) {
@@ -50,12 +57,6 @@ for (const required of [
     process.stderr.write(`fake-codex: expected ${required} after exec\n`);
     process.exit(2);
   }
-}
-if (args.includes("--ignore-user-config")) {
-  process.stderr.write(
-    "fake-codex: --ignore-user-config breaks Windows read-only target access\n",
-  );
-  process.exit(2);
 }
 const modelIndex = args.indexOf("-m", execIndex + 1);
 if (modelIndex < 0 || !args[modelIndex + 1]) {

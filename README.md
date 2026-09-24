@@ -136,24 +136,28 @@ credentials or model usage.
 
 | Platform | Installer | Test runner | Workflow coverage | Verified live host |
 |---|---|---|---|---|
-| Windows 10/11 | `install.ps1` | `test.ps1` | PowerShell 7 + Windows PowerShell 5.1 mocked flows | Windows 11, PowerShell 7 |
+| Windows 10/11 | `install.ps1` | `test.ps1` | PowerShell 7 + Windows PowerShell 5.1 mocked flows | Windows 11, PowerShell 7 + 5.1 |
 | Linux | `install.sh` | `test.sh` | Ubuntu 24.04, Bash mocked full flow | Kubuntu 26.04, Bash 5.3 |
 | macOS | `install.sh` | `test.sh` | macOS 15, Bash mocked full flow | macOS 26.6 Intel, Bash 3.2 |
 
-Current support floor: Codex CLI **0.149.0**. The default model is
-`gpt-5.6-sol`; full reviews request `xhigh` reasoning. Model availability
+Current support floor: Codex CLI **0.156.1**. The default model is
+`gpt-6-sol`; full reviews request `xhigh` reasoning. Model availability
 depends on the account and can change independently of this repository.
 
-Last live verification: **2026-08-21** with Codex CLI 0.149.0 on Windows 11,
-Kubuntu 26.04, and macOS 26.6 Intel. Each platform passed its installer probe
-and full planted-bug review through the read-only sandbox. The full tests also
-confirmed that Codex preserved the target file hash and directory inventory.
+Last live verification: **2026-09-23** with Codex CLI 0.156.1 and `gpt-6-sol`
+on Windows 11 (PowerShell 7, Windows PowerShell 5.1, and Git Bash). The
+installer probe and full planted-bug review passed through the read-only
+sandbox, and the full tests confirmed that Codex preserved the target file hash
+and directory inventory.
+Kubuntu 26.04 and macOS 26.6 Intel were last live-verified on **2026-08-21**
+with Codex CLI 0.149.0, `gpt-5.6-sol`, and the previous invocation; rerun
+`./test.sh --full` there to confirm the current flags.
 
 ## Configuration
 
 | Variable | Purpose | Default |
 |---|---|---|
-| `CODEX_REVIEW_MODEL` | Override model used by installers and tests | `gpt-5.6-sol` |
+| `CODEX_REVIEW_MODEL` | Override model used by installers and tests | `gpt-6-sol` |
 | `CLAUDE_SKILLS_DIR` | Override personal Claude skills root in installers and tests | Platform user skills directory |
 
 ## Safety model
@@ -162,16 +166,21 @@ Codex runs with a restricted invocation equivalent to:
 
 ```text
 -s read-only -a never --disable plugins --disable apps --disable hooks
--c mcp_servers={} exec ... --ephemeral
+-c mcp_servers={} exec --ignore-user-config -c windows.sandbox=unelevated
+... --ephemeral
 ```
 
 This combination asks Codex CLI to enforce filesystem read-only access, denies
-approval escalation, clears configured MCP servers, disables plugin/app/hook
-tool surfaces, and avoids saving the session. User configuration remains loaded
-because Codex CLI 0.149.0 on Windows rejects target reads when
-`--ignore-user-config` is set; explicit CLI flags override side-effecting tool
-configuration. Prompts also state the read-only rule, but prompt text is not
-treated as the security boundary.
+approval escalation, skips user configuration (and with it every configured
+MCP server), disables plugin/app/hook tool surfaces, and avoids saving the
+session. `--ignore-user-config` is required because Codex CLI 0.156.1 merges
+`-c mcp_servers={}` into configured servers instead of clearing them. Ignoring
+the config also drops its `[windows] sandbox` setting, after which Windows
+blocks every shell command, so the invocation sets the Windows sandbox to
+`unelevated` explicitly. On one verified Windows host the `elevated` sandbox
+also failed setup while validating the Codex desktop app's runtime directory;
+`unelevated` avoids that path and still denies writes. Prompts also state the
+read-only rule, but prompt text is not treated as the security boundary.
 
 Review results and logs belong in a temporary directory outside the target.
 Fixes are separate work and require explicit user authorization.

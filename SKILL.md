@@ -13,8 +13,9 @@ against the local code before reporting it to the user.
 - Review only. Do not edit, create, or delete files in the target tree.
 - Enforce read-only access with Codex's `read-only` sandbox and approvals set
   to `never`. Never use `--dangerously-bypass-approvals-and-sandbox`.
-- Isolate the reviewer from configured MCP servers, plugins, apps, and hooks.
-  These tools are outside the filesystem sandbox and could have side effects.
+- Isolate the reviewer from user configuration, configured MCP servers,
+  plugins, apps, and hooks. These tools are outside the filesystem sandbox and
+  could have side effects.
 - Use `--ephemeral` so review sessions are not persisted.
 - Support both diff reviews and plain reviews of files or directories.
 - Report only:
@@ -29,11 +30,12 @@ against the local code before reporting it to the user.
 
 ## Prerequisites
 
-Resolve `codex` from `PATH` and require Codex CLI 0.149.0 or newer. This floor
-is tied to the currently verified cross-platform invocation and Windows
-read-only sandbox behavior, not to a permanent model guarantee.
+Resolve `codex` from `PATH` and require Codex CLI 0.156.1 or newer. This floor
+is tied to the currently verified invocation, Windows read-only sandbox
+behavior, and `gpt-6-sol` access (older clients are refused the model), not to
+a permanent model guarantee.
 
-Use `gpt-5.6-sol` by default with `xhigh` reasoning. If the user set
+Use `gpt-6-sol` by default with `xhigh` reasoning. If the user set
 `CODEX_REVIEW_MODEL`, use that value. If the default model is unavailable,
 report the failure and ask before changing the configured model.
 
@@ -87,10 +89,10 @@ to a temporary directory outside the reviewed tree.
 ### Bash, zsh, or Git Bash
 
 ```bash
-MODEL="${CODEX_REVIEW_MODEL:-gpt-5.6-sol}"
+MODEL="${CODEX_REVIEW_MODEL:-gpt-6-sol}"
 printf '%s\n' "$PROMPT" | "$CODEX" -C "$TARGET" -s read-only -a never \
   --disable plugins --disable apps --disable hooks \
-  -c 'mcp_servers={}' exec \
+  -c 'mcp_servers={}' exec --ignore-user-config -c windows.sandbox=unelevated \
   -m "$MODEL" -c model_reasoning_effort=xhigh \
   --skip-git-repo-check --ephemeral \
   -o "$RESULT" >"$LOG" 2>&1
@@ -99,18 +101,25 @@ printf '%s\n' "$PROMPT" | "$CODEX" -C "$TARGET" -s read-only -a never \
 ### PowerShell
 
 ```powershell
-$Model = if ($env:CODEX_REVIEW_MODEL) { $env:CODEX_REVIEW_MODEL } else { "gpt-5.6-sol" }
+$Model = if ($env:CODEX_REVIEW_MODEL) { $env:CODEX_REVIEW_MODEL } else { "gpt-6-sol" }
 $Prompt | & $Codex -C $Target -s read-only -a never `
   --disable plugins --disable apps --disable hooks `
-  -c "mcp_servers={}" exec `
+  -c "mcp_servers={}" exec --ignore-user-config -c windows.sandbox="unelevated" `
   -m $Model -c model_reasoning_effort="xhigh" `
   --skip-git-repo-check --ephemeral `
   -o $Result *> $Log
 ```
 
 `-C`, `-s`, `-a`, `--disable`, and the MCP override are global flags and
-therefore appear before `exec`. `--skip-git-repo-check`, `--ephemeral`, and
-`-o` are `exec` flags.
+therefore appear before `exec`. `--ignore-user-config`, `--skip-git-repo-check`,
+`--ephemeral`, and `-o` are `exec` flags.
+
+`--ignore-user-config` is required: Codex CLI 0.156.1 merges
+`-c mcp_servers={}` into configured servers instead of clearing them, so
+user-configured MCP tools would otherwise stay callable outside the sandbox.
+Ignoring `config.toml` also drops its `[windows] sandbox` setting, and Windows
+then blocks every shell command, so `windows.sandbox=unelevated` restores a
+read-only sandbox that can read the target. The setting is Windows-specific.
 
 ## Triage
 
@@ -136,7 +145,7 @@ Common fixes:
 
 | Symptom | Action |
 |---|---|
-| CLI missing or older than 0.149.0 | Install current Codex CLI, then resolve `codex` from `PATH` again. |
+| CLI missing or older than 0.156.1 | Install current Codex CLI, then resolve `codex` from `PATH` again. |
 | Authentication failure | Run `codex login`. |
 | Model unavailable | Set `CODEX_REVIEW_MODEL` to a model available to the user's account, with approval. |
 | Usage limit | Wait for the reset time shown in the log. |
@@ -145,8 +154,10 @@ Common fixes:
 
 ## Verification note
 
-Invocation and tests last live-verified on 2026-08-21 with Codex CLI 0.149.0 on
-Windows 11, Kubuntu 26.04, and macOS 26.6 Intel. Installer probes and planted-bug
-reviews passed through the read-only sandbox; full tests preserved the target
-file hash and directory inventory. The included workflow is configured to test
-mocked Bash and PowerShell control flow without account-bound model calls.
+Invocation and tests last live-verified on 2026-09-23 with Codex CLI 0.156.1 and
+`gpt-6-sol` on Windows 11 (PowerShell 7, Windows PowerShell 5.1, and Git Bash).
+Installer probes and planted-bug reviews passed through the read-only sandbox;
+full tests preserved the target file hash and directory inventory. Kubuntu
+26.04 and macOS 26.6 Intel were last live-verified on 2026-08-21 with Codex CLI
+0.149.0 and the previous invocation. The included workflow is configured to
+test mocked Bash and PowerShell control flow without account-bound model calls.
